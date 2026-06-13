@@ -587,3 +587,12 @@ textarea.input { resize: vertical; min-height: 88px; font-family: 'Inter', sans-
 .rec-hist-content .rec-para { font-size: 14px; line-height: 1.6; margin-bottom: 5px; }
 .rec-hist-content .rec-bullet { font-size: 14px; }
 .rec-hist-content .rec-section-hdr { font-size: 14px; margin-top: 14px; }
+
+/* ── Supplement row — stacks on small screens ── */
+.supp-row { display: flex; flex-direction: column; gap: 14px; margin-bottom: 14px; }
+.supp-row .field-col { display: flex; flex-direction: column; gap: 6px; }
+
+/* ── Walk time MM / SS row ── */
+.walk-time-row { display: flex; align-items: center; gap: 6px; }
+.walk-time-input { width: 82px !important; text-align: center; }
+.walk-time-sep { font-size: 15px; font-weight: 700; color: var(--text-muted); }

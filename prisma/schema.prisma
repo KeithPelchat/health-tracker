@@ -20,16 +20,18 @@ model DailyLog {
   rhr       Int?
 
   sleepScore   Int?
-  sleepHours   Float?
+  sleepHours   Int?
+  sleepMins    Int?
   sleepQuality String?
 
-  amSupp    Boolean @default(false)
-  pmSupp    Boolean @default(false)
+  amSupp    Boolean?
+  pmSupp    Boolean?
 
   hydration Int?
 
   walkMiles Float?
   walkMins  Int?
+  walkSecs  Int?
 
   notes     String?
 }

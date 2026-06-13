@@ -17,10 +17,11 @@ function fmtShortDate(d: Date): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-function fmtSleepHours(h: number): string {
-  const hrs = Math.floor(h)
-  const mins = Math.round((h - hrs) * 60)
-  return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`
+function fmtSleepDuration(hours: number | null, mins: number | null): string {
+  if (hours == null && mins == null) return ''
+  const h = hours ?? 0
+  const m = mins ?? 0
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
 
 export async function GET(req: NextRequest) {
@@ -88,11 +89,12 @@ export async function GET(req: NextRequest) {
     if (log.rhr) block1 += `RHR: ${log.rhr} bpm\n`
 
     // Sleep line
-    const hasSleep = log.sleepScore != null || log.sleepHours != null || log.sleepQuality != null
+    const hasSleep = log.sleepScore != null || log.sleepHours != null || log.sleepMins != null || log.sleepQuality != null
     if (hasSleep) {
       const scorePart = log.sleepScore != null ? `Score ${log.sleepScore}` : 'Score —'
       const qualityPart = log.sleepQuality ? ` (${log.sleepQuality})` : ''
-      const hoursPart = log.sleepHours != null ? ` — ${fmtSleepHours(log.sleepHours)}` : ''
+      const dur = fmtSleepDuration(log.sleepHours ?? null, log.sleepMins ?? null)
+      const hoursPart = dur ? ` — ${dur}` : ''
       block1 += `**Sleep:** ${scorePart}${qualityPart}${hoursPart}\n`
     } else {
       block1 += `**Sleep:** —\n`
@@ -100,7 +102,10 @@ export async function GET(req: NextRequest) {
 
     block1 += `AM Supps: ${log.amSupp ? 'Yes' : 'No'} | PM Supps: ${log.pmSupp ? 'Yes' : 'No'}\n`
     if (log.hydration != null) block1 += `Hydration: ${log.hydration} oz\n`
-    if (log.walkMiles) block1 += `Walk: ${log.walkMiles} miles${log.walkMins ? ` (${log.walkMins} min)` : ''}\n`
+    if (log.walkMiles) {
+      const wt = log.walkMins != null ? `${log.walkMins}m${log.walkSecs ? `${log.walkSecs}s` : ''}` : ''
+      block1 += `Walk: ${log.walkMiles} miles${wt ? ` (${wt})` : ''}\n`
+    }
 
     const foods = foodByDate[dateStr] || []
     if (foods.length > 0) {

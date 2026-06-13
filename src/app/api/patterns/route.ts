@@ -3,10 +3,10 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
-function calcBurn(walkMins: number, weightLbs: number): number {
+function calcBurn(walkMins: number, weightLbs: number, walkSecs = 0): number {
   const MET = 3.8
   const weightKg = weightLbs / 2.205
-  const hours = walkMins / 60
+  const hours = (walkMins * 60 + walkSecs) / 3600
   return Math.round(MET * weightKg * hours)
 }
 
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     prisma.dailyLog.findMany({
       where: whereDate,
       orderBy: { date: 'asc' },
-      select: { date: true, weight: true, bpSys: true, bpDia: true, hydration: true, walkMiles: true, walkMins: true, sleepScore: true, sleepHours: true, sleepQuality: true },
+      select: { date: true, weight: true, bpSys: true, bpDia: true, hydration: true, walkMiles: true, walkMins: true, walkSecs: true, sleepScore: true, sleepHours: true, sleepMins: true, sleepQuality: true },
     }),
     prisma.foodEntry.groupBy({
       by: ['date'],
@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
       weightLbs = prior?.weight ?? null
     }
     if (weightLbs) {
-      walkBurn.push({ date: dateStr, burnKcal: calcBurn(log.walkMins, weightLbs) })
+      walkBurn.push({ date: dateStr, burnKcal: calcBurn(log.walkMins, weightLbs, log.walkSecs ?? 0) })
     }
   }
 

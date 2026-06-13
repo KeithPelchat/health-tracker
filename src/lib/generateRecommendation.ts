@@ -89,7 +89,8 @@ export async function buildDataSummary(): Promise<string> {
     if (avgScore) lines.push(`Average score: ${avgScore} | High: ${highNights} nights | OK: ${okNights} nights | Poor: ${poorNights} nights`)
     const last7sleep = sleepLogs.slice(0, 7).reverse()
     for (const l of last7sleep) {
-      lines.push(`- ${fmtDate(l.date)} | Score: ${l.sleepScore ?? '—'} | ${l.sleepQuality ?? '—'} | ${l.sleepHours != null ? l.sleepHours + 'h' : '—'}`)
+      const dur = l.sleepHours != null ? `${l.sleepHours}h${l.sleepMins ? ` ${l.sleepMins}m` : ''}` : '—'
+      lines.push(`- ${fmtDate(l.date)} | Score: ${l.sleepScore ?? '—'} | ${l.sleepQuality ?? '—'} | ${dur}`)
     }
   }
   lines.push('')
@@ -205,9 +206,15 @@ export async function buildDataSummary(): Promise<string> {
       if (todayLog.weight)    lines.push(`Weight: ${todayLog.weight} lbs`)
       if (todayLog.bpSys)     lines.push(`BP: ${todayLog.bpSys}/${todayLog.bpDia}${todayLog.bpDia && todayLog.bpDia <= 65 ? ' WARNING LOW DIASTOLIC' : ''}`)
       if (todayLog.rhr)       lines.push(`RHR: ${todayLog.rhr} bpm`)
-      if (todayLog.sleepScore)lines.push(`Sleep: score ${todayLog.sleepScore} | ${todayLog.sleepQuality} | ${todayLog.sleepHours}h`)
+      if (todayLog.sleepScore) {
+        const dur = todayLog.sleepHours != null ? `${todayLog.sleepHours}h${todayLog.sleepMins ? ` ${todayLog.sleepMins}m` : ''}` : '—'
+        lines.push(`Sleep: score ${todayLog.sleepScore} | ${todayLog.sleepQuality} | ${dur}`)
+      }
       if (todayLog.hydration) lines.push(`Hydration: ${todayLog.hydration} oz`)
-      if (todayLog.walkMiles) lines.push(`Walk: ${todayLog.walkMiles} mi${todayLog.walkMins ? ` / ${todayLog.walkMins} min` : ''}`)
+      if (todayLog.walkMiles) {
+        const wt = todayLog.walkMins != null ? `${todayLog.walkMins}m${todayLog.walkSecs ? `${todayLog.walkSecs}s` : ''}` : ''
+        lines.push(`Walk: ${todayLog.walkMiles} mi${wt ? ` / ${wt}` : ''}`)
+      }
       if (todayLog.amSupp)    lines.push('AM supplements: taken')
       if (todayLog.pmSupp)    lines.push('PM supplements: taken')
       if (todayLog.notes)     lines.push(`Notes: ${todayLog.notes}`)

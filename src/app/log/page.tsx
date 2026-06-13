@@ -57,12 +57,14 @@ interface DailyLog {
   rhr?: number | null
   sleepScore?: number | null
   sleepHours?: number | null
+  sleepMins?: number | null
   sleepQuality?: string | null
   amSupp?: boolean | null
   pmSupp?: boolean | null
   hydration?: number | null
   walkMiles?: number | null
   walkMins?: number | null
+  walkSecs?: number | null
   notes?: string | null
 }
 
@@ -339,22 +341,25 @@ export default function LogPage() {
 
   // Walk burn calc
   const effectiveWeight = (log.weight as number | null) ?? recentWeight
-  const walkBurnKcal = (effectiveWeight && log.walkMins)
-    ? Math.round(3.8 * (effectiveWeight / 2.205) * ((log.walkMins as number) / 60))
+  const walkTotalSecs = ((log.walkMins ?? 0) * 60) + (log.walkSecs ?? 0)
+  const walkBurnKcal = (effectiveWeight && walkTotalSecs > 0)
+    ? Math.round(3.8 * (effectiveWeight / 2.205) * (walkTotalSecs / 3600))
     : null
 
   const netCals = totalCals - (walkBurnKcal ?? 0)
 
   async function handleSave() {
     setSaving(true)
-    await fetch('/api/log', {
+    const res = await fetch('/api/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: today, ...log }),
+      body: JSON.stringify({ ...log, date: today }),
     })
     setSaving(false)
-    setShowToast(true)
-    setTimeout(() => setShowToast(false), 2000)
+    if (res.ok) {
+      setShowToast(true)
+      setTimeout(() => setShowToast(false), 2000)
+    }
   }
 
   async function addCustomEntry() {
@@ -582,10 +587,17 @@ export default function LogPage() {
               onChange={e => setLogField('sleepScore', e.target.value ? Number(e.target.value) : null)} />
           </div>
           <div className="field-col">
-            <label className="field-lbl">Sleep Hours</label>
-            <input className="input" type="number" step="0.25" placeholder="—"
-              value={log.sleepHours ?? ''}
-              onChange={e => setLogField('sleepHours', e.target.value ? Number(e.target.value) : null)} />
+            <label className="field-lbl">Duration</label>
+            <div className="walk-time-row">
+              <input className="input walk-time-input" type="number" min="0" max="24" placeholder="0"
+                value={log.sleepHours ?? ''}
+                onChange={e => setLogField('sleepHours', e.target.value ? Number(e.target.value) : null)} />
+              <span className="walk-time-sep">h</span>
+              <input className="input walk-time-input" type="number" min="0" max="59" placeholder="0"
+                value={log.sleepMins ?? ''}
+                onChange={e => setLogField('sleepMins', e.target.value ? Number(e.target.value) : null)} />
+              <span className="walk-time-sep">m</span>
+            </div>
           </div>
         </div>
         <div>
@@ -804,7 +816,7 @@ export default function LogPage() {
       {/* SUPPLEMENTS */}
       <div className="card card-supp">
         <div className="section-label">Supplements</div>
-        <div className="field-row">
+        <div className="supp-row">
           <div className="field-col">
             <label className="field-lbl">AM Stack</label>
             <div className="toggle-grp">
@@ -831,11 +843,16 @@ export default function LogPage() {
             <input className="input" type="number" step="0.1" placeholder="—" value={log.walkMiles ?? ''} onChange={e => setLogField('walkMiles', e.target.value)} />
           </div>
           <div className="field-col">
-            <label className="field-lbl">Minutes</label>
-            <input className="input" type="number" placeholder="—" value={log.walkMins ?? ''} onChange={e => setLogField('walkMins', e.target.value)} />
+            <label className="field-lbl">Duration</label>
+            <div className="walk-time-row">
+              <input className="input walk-time-input" type="number" min="0" placeholder="0" value={log.walkMins ?? ''} onChange={e => setLogField('walkMins', e.target.value)} />
+              <span className="walk-time-sep">m</span>
+              <input className="input walk-time-input" type="number" min="0" max="59" placeholder="0" value={log.walkSecs ?? ''} onChange={e => setLogField('walkSecs', e.target.value)} />
+              <span className="walk-time-sep">s</span>
+            </div>
           </div>
         </div>
-        {log.walkMins && walkBurnKcal !== null && (
+        {walkTotalSecs > 0 && walkBurnKcal !== null && (
           <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sky)', marginTop: 6 }}>
             ~{walkBurnKcal} kcal burned
           </div>
