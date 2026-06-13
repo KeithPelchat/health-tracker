@@ -1,0 +1,110 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model DailyLog {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @unique @db.Date
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  weight    Float?
+  bodyFat   Float?
+  bpSys     Int?
+  bpDia     Int?
+  rhr       Int?
+
+  sleepScore   Int?
+  sleepHours   Float?
+  sleepQuality String?
+
+  amSupp    Boolean @default(false)
+  pmSupp    Boolean @default(false)
+
+  hydration Int?
+
+  walkMiles Float?
+  walkMins  Int?
+
+  notes     String?
+}
+
+model Meal {
+  id       Int    @id @default(autoincrement())
+  name     String @unique
+  category String // "protein" | "countable" | "vegetable" | "condiment"
+
+  // protein category (per 100g cooked)
+  proteinPer100g Float?
+  fatPer100g     Float?
+  carbsPer100g   Float?
+  calsPer100g    Float?
+
+  // countable category (per unit)
+  proteinPerUnit Float?
+  fatPerUnit     Float?
+  carbsPerUnit   Float?
+  calsPerUnit    Float?
+  unitLabel      String?
+
+  // vegetable category (per 100g cooked)
+  carbsPer100gVeg Float?
+  calsPer100gVeg  Float?
+
+  // condiment category (per fixed portion)
+  proteinFixed Float?
+  fatFixed     Float?
+  carbsFixed   Float?
+  calsFixed    Float?
+  portionLabel String?
+
+  isCustom  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  entries FoodEntry[]
+}
+
+model FoodEntry {
+  id         Int      @id @default(autoincrement())
+  date       DateTime @db.Date
+  mealSlot   String
+  mealId     Int?
+  meal       Meal?    @relation(fields: [mealId], references: [id])
+  customDesc String?
+  protein    Float
+  fat        Float
+  netCarbs   Float
+  calories   Int
+  createdAt  DateTime @default(now())
+
+  @@index([date])
+}
+
+model BristolEntry {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @db.Date
+  value     Int
+  timeOfDay String?
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}
+
+model Recommendation {
+  id           Int      @id @default(autoincrement())
+  date         DateTime @unique @db.Date
+  content      String   @db.Text
+  generatedAt  DateTime @default(now())
+  dataSnapshot String   @db.Text
+}
+
+model ProtocolContext {
+  id        Int      @id @default(autoincrement())
+  content   String   @db.Text
+  updatedAt DateTime @updatedAt
+}
