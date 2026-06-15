@@ -95,6 +95,30 @@ function formToPayload(form: FormData, category: Category, isCustom = false) {
   return base
 }
 
+function applyLookupToForm(form: FormData, category: Category, res: { protein?: number | null; fat?: number | null; netCarbs?: number | null; calories?: number | null }): FormData {
+  const filled = { ...form }
+  if (category === 'protein') {
+    if (res.protein != null) filled.proteinPer100g = String(res.protein)
+    if (res.fat != null) filled.fatPer100g = String(res.fat)
+    if (res.netCarbs != null) filled.carbsPer100g = String(res.netCarbs)
+    if (res.calories != null) filled.calsPer100g = String(res.calories)
+  } else if (category === 'countable') {
+    if (res.protein != null) filled.proteinPerUnit = String(res.protein)
+    if (res.fat != null) filled.fatPerUnit = String(res.fat)
+    if (res.netCarbs != null) filled.carbsPerUnit = String(res.netCarbs)
+    if (res.calories != null) filled.calsPerUnit = String(res.calories)
+  } else if (category === 'vegetable') {
+    if (res.netCarbs != null) filled.carbsPer100gVeg = String(res.netCarbs)
+    if (res.calories != null) filled.calsPer100gVeg = String(res.calories)
+  } else if (category === 'condiment') {
+    if (res.protein != null) filled.proteinFixed = String(res.protein)
+    if (res.fat != null) filled.fatFixed = String(res.fat)
+    if (res.netCarbs != null) filled.carbsFixed = String(res.netCarbs)
+    if (res.calories != null) filled.calsFixed = String(res.calories)
+  }
+  return filled
+}
+
 function CategoryFields({ category, form, onChange }: { category: Category, form: FormData, onChange: (k: string, v: string) => void }) {
   const inp = (label: string, key: string, placeholder?: string) => (
     <div className="field-col">
@@ -142,9 +166,13 @@ export default function MealsPage() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState<FormData>(emptyForm())
   const [editCategory, setEditCategory] = useState<Category>('protein')
+  const [editLooking, setEditLooking] = useState(false)
+  const [editAutoFilled, setEditAutoFilled] = useState(false)
   const [showAddForm, setShowAddForm] = useState(false)
   const [addCategory, setAddCategory] = useState<Category>('protein')
   const [addForm, setAddForm] = useState<FormData>(emptyForm())
+  const [addLooking, setAddLooking] = useState(false)
+  const [addAutoFilled, setAddAutoFilled] = useState(false)
   const [saving, setSaving] = useState(false)
   const [filterCat, setFilterCat] = useState<Category | 'all'>('all')
 
@@ -160,6 +188,45 @@ export default function MealsPage() {
     setEditingId(meal.id)
     setEditCategory(meal.category as Category)
     setEditForm(mealToForm(meal))
+    setEditAutoFilled(false)
+  }
+
+  async function handleAddLookup() {
+    setAddLooking(true)
+    const res = await fetch('/api/meals/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        description: addForm.name,
+        category: addCategory,
+        unitLabel: addForm.unitLabel || undefined,
+        portionLabel: addForm.portionLabel || undefined,
+      }),
+    }).then(r => r.json())
+    setAddLooking(false)
+    if (!res.error) {
+      setAddForm(prev => applyLookupToForm(prev, addCategory, res))
+      setAddAutoFilled(true)
+    }
+  }
+
+  async function handleEditLookup() {
+    setEditLooking(true)
+    const res = await fetch('/api/meals/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        description: editForm.name,
+        category: editCategory,
+        unitLabel: editForm.unitLabel || undefined,
+        portionLabel: editForm.portionLabel || undefined,
+      }),
+    }).then(r => r.json())
+    setEditLooking(false)
+    if (!res.error) {
+      setEditForm(prev => applyLookupToForm(prev, editCategory, res))
+      setEditAutoFilled(true)
+    }
   }
 
   async function saveEdit(id: number) {
@@ -171,6 +238,7 @@ export default function MealsPage() {
     })
     setSaving(false)
     setEditingId(null)
+    setEditAutoFilled(false)
     fetchMeals()
   }
 
@@ -191,6 +259,7 @@ export default function MealsPage() {
     setSaving(false)
     setShowAddForm(false)
     setAddForm(emptyForm())
+    setAddAutoFilled(false)
     fetchMeals()
   }
 
@@ -225,13 +294,31 @@ export default function MealsPage() {
               <div className="meal-edit-form">
                 <div className="field-col" style={{ marginBottom: 12 }}>
                   <label className="field-lbl">Name</label>
-                  <input className="input" value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
+                  <input className="input" value={editForm.name}
+                    onChange={e => { setEditForm(p => ({ ...p, name: e.target.value })); setEditAutoFilled(false) }} />
                 </div>
+                {editForm.name.length >= 3 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <button
+                      className="btn-add-slot"
+                      style={{ marginTop: 0 }}
+                      onClick={handleEditLookup}
+                      disabled={editLooking}
+                    >
+                      {editLooking ? 'Looking up…' : '🔍 Look up nutrition'}
+                    </button>
+                    {editAutoFilled && (
+                      <p style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 4 }}>
+                        ⚠️ AI estimate — verify if precision matters
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div className="toggle-grp" style={{ marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                   {CATEGORIES.map(cat => (
                     <button key={cat} className={`tog${editCategory === cat ? ' blue' : ''}`}
                       style={{ flex: 'none', padding: '8px 14px', fontSize: 13 }}
-                      onClick={() => setEditCategory(cat)}>
+                      onClick={() => { setEditCategory(cat); setEditAutoFilled(false) }}>
                       {CAT_LABELS[cat]}
                     </button>
                   ))}
@@ -239,7 +326,7 @@ export default function MealsPage() {
                 <CategoryFields category={editCategory} form={editForm} onChange={(k, v) => setEditForm(p => ({ ...p, [k]: v }))} />
                 <div className="meal-edit-actions">
                   <button className="btn-primary" onClick={() => saveEdit(meal.id)} disabled={saving}>Save Changes</button>
-                  <button className="btn-ghost" onClick={() => setEditingId(null)}>Cancel</button>
+                  <button className="btn-ghost" onClick={() => { setEditingId(null); setEditAutoFilled(false) }}>Cancel</button>
                 </div>
               </div>
             ) : (
@@ -270,7 +357,7 @@ export default function MealsPage() {
             {CATEGORIES.map(cat => (
               <button key={cat} className={`tog${addCategory === cat ? ' blue' : ''}`}
                 style={{ flex: 'none', padding: '8px 14px', fontSize: 13 }}
-                onClick={() => setAddCategory(cat)}>
+                onClick={() => { setAddCategory(cat); setAddAutoFilled(false) }}>
                 {CAT_LABELS[cat]}
               </button>
             ))}
@@ -279,12 +366,29 @@ export default function MealsPage() {
           <div className="field-col" style={{ marginBottom: 12 }}>
             <label className="field-lbl">Name</label>
             <input className="input" placeholder="Meal name" value={addForm.name}
-              onChange={e => setAddForm(p => ({ ...p, name: e.target.value }))} />
+              onChange={e => { setAddForm(p => ({ ...p, name: e.target.value })); setAddAutoFilled(false) }} />
           </div>
+          {addForm.name.length >= 3 && (
+            <div style={{ marginBottom: 12 }}>
+              <button
+                className="btn-add-slot"
+                style={{ marginTop: 0 }}
+                onClick={handleAddLookup}
+                disabled={addLooking}
+              >
+                {addLooking ? 'Looking up…' : '🔍 Look up nutrition'}
+              </button>
+              {addAutoFilled && (
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 4 }}>
+                  ⚠️ AI estimate — verify if precision matters
+                </p>
+              )}
+            </div>
+          )}
           <CategoryFields category={addCategory} form={addForm} onChange={(k, v) => setAddForm(p => ({ ...p, [k]: v }))} />
           <div className="meal-edit-actions">
             <button className="btn-primary" onClick={saveNewMeal} disabled={saving || !addForm.name.trim()}>Save Meal</button>
-            <button className="btn-ghost" onClick={() => { setShowAddForm(false); setAddForm(emptyForm()) }}>Cancel</button>
+            <button className="btn-ghost" onClick={() => { setShowAddForm(false); setAddForm(emptyForm()); setAddAutoFilled(false) }}>Cancel</button>
           </div>
         </div>
       ) : (

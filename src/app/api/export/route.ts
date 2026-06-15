@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
+import { todayChicago } from '@/lib/dates'
 
 const BRISTOL_LABELS: Record<number, string> = {
   1: 'Separate hard lumps',
@@ -26,22 +27,21 @@ function fmtSleepDuration(hours: number | null, mins: number | null): string {
 
 export async function GET(req: NextRequest) {
   const range = req.nextUrl.searchParams.get('range') || '7days'
-  const now = new Date()
+  const todayDate = todayChicago()
   let startDate: Date
-  let endDate: Date = now
+  let endDate: Date = todayDate
 
   if (range === 'today') {
-    startDate = new Date(now.toISOString().split('T')[0] + 'T00:00:00')
-    endDate = startDate
+    startDate = todayDate
+    endDate = todayDate
   } else if (range === 'yesterday') {
-    const y = new Date(now)
-    y.setDate(y.getDate() - 1)
-    startDate = new Date(y.toISOString().split('T')[0] + 'T00:00:00')
-    endDate = startDate
+    const y = new Date(todayDate)
+    y.setUTCDate(y.getUTCDate() - 1)
+    startDate = y
+    endDate = y
   } else {
-    startDate = new Date(now)
-    startDate.setDate(startDate.getDate() - 6)
-    startDate = new Date(startDate.toISOString().split('T')[0] + 'T00:00:00')
+    startDate = new Date(todayDate)
+    startDate.setUTCDate(startDate.getUTCDate() - 6)
   }
 
   const dateWhere = range === 'today' || range === 'yesterday'

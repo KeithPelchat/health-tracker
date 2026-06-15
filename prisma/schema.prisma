@@ -110,3 +110,13 @@ model ProtocolContext {
   content   String   @db.Text
   updatedAt DateTime @updatedAt
 }
+
+model CoachMessage {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @db.Date
+  role      String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}

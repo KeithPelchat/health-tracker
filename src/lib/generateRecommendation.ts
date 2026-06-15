@@ -1,5 +1,6 @@
 import prisma from './prisma'
 import { ensureProtocolContext } from './seedProtocol'
+import { todayChicago } from './dates'
 import Anthropic from '@anthropic-ai/sdk'
 
 function fmtDate(d: Date | string) {
@@ -13,10 +14,10 @@ function pct(n: number, d: number) {
 
 export async function buildDataSummary(): Promise<string> {
   const now = new Date()
-  const since90 = new Date(now); since90.setDate(since90.getDate() - 90); since90.setHours(0,0,0,0)
-  const since14 = new Date(now); since14.setDate(since14.getDate() - 14); since14.setHours(0,0,0,0)
-  const since7  = new Date(now); since7.setDate(since7.getDate() - 7);   since7.setHours(0,0,0,0)
-  const todayStart = new Date(now); todayStart.setHours(0,0,0,0)
+  const todayStart = todayChicago()
+  const since90 = new Date(todayStart); since90.setUTCDate(since90.getUTCDate() - 90)
+  const since14 = new Date(todayStart); since14.setUTCDate(since14.getUTCDate() - 14)
+  const since7  = new Date(todayStart); since7.setUTCDate(since7.getUTCDate() - 7)
 
   const [logs, bristolEntries, foodEntries, todayLog, todayFood, todayBristol] = await Promise.all([
     prisma.dailyLog.findMany({ where: { date: { gte: since90 } }, orderBy: { date: 'desc' } }),
@@ -293,7 +294,7 @@ Be specific — reference actual numbers from the data. No generic advice.`
         }
 
         // Save to DB
-        const today = new Date(); today.setHours(0,0,0,0)
+        const today = todayChicago()
         await prisma.recommendation.upsert({
           where: { date: today },
           create: { date: today, content: fullContent, dataSnapshot: dataSummary },

@@ -1,6 +1,13 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { toChicagoDateStr, formatChicagoDisplay } from '@/lib/dates'
+
+interface ChatMessage {
+  id: string | number
+  role: 'user' | 'assistant'
+  content: string
+}
 
 interface HistoryRec {
   id: number
@@ -9,24 +16,23 @@ interface HistoryRec {
   generatedAt: string
 }
 
+const SUGGESTED_PROMPTS = [
+  "What's left on my targets today?",
+  "Give me my daily coaching briefing.",
+  "I'm making chicken for dinner — how much should I eat?",
+  "I skipped my walk — how do I adjust food?",
+  "What should my last meal of the day look like?",
+  "How is my week looking overall?",
+]
+
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-}
-
-function fmtDateLong(iso: string) {
-  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-  })
 }
 
 function fmtDateShort(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
   })
-}
-
-function getTodayStr() {
-  return new Date().toISOString().split('T')[0]
 }
 
 function boldify(text: string) {
@@ -46,7 +52,6 @@ function renderMarkdown(text: string) {
       continue
     }
 
-    // Watch List section header
     if (line.startsWith('**Watch List') || line.startsWith('**⚠️')) {
       const content = line.replace(/\*\*(.*?)\*\*/g, '$1').replace(/^#+\s*/, '')
       elements.push(
@@ -57,7 +62,6 @@ function renderMarkdown(text: string) {
       continue
     }
 
-    // What's Working section header
     if (line.startsWith("**What's Working") || line.startsWith('**✅')) {
       const content = line.replace(/\*\*(.*?)\*\*/g, '$1').replace(/^#+\s*/, '')
       elements.push(
@@ -68,14 +72,12 @@ function renderMarkdown(text: string) {
       continue
     }
 
-    // Other bold section headers (Food Plan, Movement, Hydration, Sleep)
     if (line.match(/^\*\*[A-Z]/)) {
       const content = line.replace(/\*\*(.*?)\*\*/g, '$1').replace(/^#+\s*/, '')
       elements.push(<div key={key++} className="rec-section-hdr">{content}</div>)
       continue
     }
 
-    // Bullet points
     if (line.startsWith('- ') || line.startsWith('* ')) {
       const content = line.slice(2)
       elements.push(
@@ -87,7 +89,6 @@ function renderMarkdown(text: string) {
       continue
     }
 
-    // Numbered list
     if (/^\d+\.\s/.test(line)) {
       const content = line.replace(/^\d+\.\s/, '')
       elements.push(
@@ -96,7 +97,6 @@ function renderMarkdown(text: string) {
       continue
     }
 
-    // Regular paragraph
     elements.push(
       <div key={key++} className="rec-para" dangerouslySetInnerHTML={{ __html: boldify(line) }} />
     )
@@ -105,13 +105,14 @@ function renderMarkdown(text: string) {
   return elements
 }
 
-export default function RecommendationsPage() {
-  const today = getTodayStr()
-  const [content, setContent] = useState<string | null>(null)
-  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
-  const [status, setStatus] = useState<'idle' | 'loading' | 'streaming' | 'done' | 'error'>('loading')
-  const [streamText, setStreamText] = useState('')
-  const [refreshing, setRefreshing] = useState(false)
+export default function CoachPage() {
+  const todayStr = toChicagoDateStr()
+
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [loadingMessages, setLoadingMessages] = useState(true)
+  const [input, setInput] = useState('')
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [streamingContent, setStreamingContent] = useState('')
 
   const [showContext, setShowContext] = useState(false)
   const [contextText, setContextText] = useState('')
@@ -122,41 +123,56 @@ export default function RecommendationsPage() {
   const [history, setHistory] = useState<HistoryRec[]>([])
   const [expandedHistId, setExpandedHistId] = useState<number | null>(null)
 
+  const chatEndRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  async function loadToday() {
-    setStatus('loading')
-    try {
-      const res = await fetch('/api/recommendations/today')
-      const data = await res.json()
-      if (data.content) {
-        setContent(data.content)
-        setGeneratedAt(data.generatedAt)
-        setStatus('done')
-      } else {
-        setContent(null)
-        setStatus('idle')
-      }
-    } catch {
-      setStatus('error')
-    }
-  }
+  useEffect(() => {
+    setLoadingMessages(true)
+    fetch(`/api/coach/messages?date=${todayStr}`)
+      .then(r => r.json())
+      .then(data => {
+        setMessages(data.messages || [])
+        setLoadingMessages(false)
+      })
+      .catch(() => setLoadingMessages(false))
+  }, [todayStr])
 
-  async function generate() {
-    if (refreshing) return
-    setRefreshing(true)
-    setStreamText('')
-    setContent(null)
-    setGeneratedAt(null)
-    setStatus('streaming')
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, streamingContent])
+
+  const sendMessage = useCallback(async (text: string) => {
+    const trimmed = text.trim()
+    if (isStreaming || !trimmed) return
+
+    // Save user message to DB, get back its id
+    const savedUser = await fetch('/api/coach/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: todayStr, role: 'user', content: trimmed }),
+    }).then(r => r.json())
+
+    const userMsg: ChatMessage = savedUser.message ?? { id: `u-${Date.now()}`, role: 'user', content: trimmed }
+    const newMessages = [...messages, userMsg]
+    setMessages(newMessages)
+    setInput('')
+    setIsStreaming(true)
+    setStreamingContent('')
 
     abortRef.current = new AbortController()
+
     try {
-      const res = await fetch('/api/recommendations/generate', {
+      const res = await fetch('/api/coach/chat', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+        }),
         signal: abortRef.current.signal,
       })
-      if (!res.ok || !res.body) throw new Error('Failed')
+
+      if (!res.ok || !res.body) throw new Error('Request failed')
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -165,22 +181,38 @@ export default function RecommendationsPage() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-        full += chunk
-        setStreamText(full)
+        full += decoder.decode(value, { stream: true })
+        setStreamingContent(full)
       }
 
-      setContent(full)
-      setGeneratedAt(new Date().toISOString())
-      setStatus('done')
-      loadToday()
+      // Save assistant message to DB
+      const savedAssistant = await fetch('/api/coach/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: todayStr, role: 'assistant', content: full }),
+      }).then(r => r.json())
+
+      const assistantMsg: ChatMessage = savedAssistant.message ?? { id: `a-${Date.now()}`, role: 'assistant', content: full }
+      setMessages(prev => [...prev, assistantMsg])
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== 'AbortError') {
-        setStatus('error')
+        setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'assistant', content: 'Sorry, something went wrong. Try again.' }])
       }
     } finally {
-      setRefreshing(false)
+      setIsStreaming(false)
+      setStreamingContent('')
     }
+  }, [isStreaming, messages, todayStr])
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage(input)
+    }
+  }
+
+  function clearChat() {
+    setMessages([])
   }
 
   async function loadContext() {
@@ -207,82 +239,161 @@ export default function RecommendationsPage() {
     setHistory(data.recommendations || [])
   }
 
-  useEffect(() => { loadToday() }, [])
-
-  const displayText = status === 'streaming' ? streamText : (content ?? '')
-  const hasContent = displayText.length > 0
-
-  // Split first paragraph from rest for special styling
-  const firstNewline = displayText.indexOf('\n\n')
-  const firstPara = firstNewline > 0 ? displayText.slice(0, firstNewline) : displayText
-  const rest = firstNewline > 0 ? displayText.slice(firstNewline + 2) : ''
+  const hasMessages = messages.length > 0 || isStreaming || loadingMessages
 
   return (
-    <div className="page">
+    <div className="page" style={{ paddingBottom: 24 }}>
+      {/* HEADER */}
       <div className="page-hdr">
-        <button
-          className={`refresh-btn${refreshing ? ' spinning' : ''}`}
-          onClick={() => generate()}
-          disabled={refreshing}
-          aria-label="Generate new recommendation"
-        >&#8635;</button>
         <h1 className="page-title">Daily Coach</h1>
-        <div className="page-sub" style={{ color: 'var(--sky)' }}>{fmtDateLong(today)}</div>
+        <div className="page-sub">{formatChicagoDisplay(todayStr)}</div>
         <div className="page-accent" />
       </div>
 
-      {/* Status bar */}
-      <div className="rec-status">
-        {status === 'done' && generatedAt && (
-          <span className="rec-status-ok">Generated today at {fmtTime(generatedAt)}</span>
-        )}
-        {status === 'streaming' && (
-          <span className="rec-status-generating">
-            Generating your coaching plan
-            <span className="rec-dots"><span>.</span><span>.</span><span>.</span></span>
-          </span>
-        )}
-        {status === 'error' && (
-          <span className="rec-status-err">Generation failed — tap refresh to retry</span>
-        )}
-        {status === 'idle' && (
-          <span className="rec-status-idle">No recommendation yet today — tap refresh to generate</span>
-        )}
-        {status === 'loading' && (
-          <span className="rec-status-idle">Loading…</span>
-        )}
-      </div>
-
-      {/* Main recommendation card */}
-      <div className="rec-card">
-        {!hasContent && status === 'loading' && (
+      {/* CHAT AREA */}
+      <div style={{
+        background: 'var(--surface)',
+        border: '2px solid var(--border)',
+        borderRadius: 'var(--radius)',
+        padding: '16px',
+        marginBottom: 12,
+        minHeight: 240,
+        maxHeight: '55vh',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}>
+        {loadingMessages ? (
           <div className="rec-skeleton">
-            <div className="rec-skel-bar" style={{ width: '90%' }} />
-            <div className="rec-skel-bar" style={{ width: '75%' }} />
-            <div className="rec-skel-bar" style={{ width: '85%' }} />
+            <div className="rec-skel-bar" style={{ width: '60%', alignSelf: 'flex-end' }} />
+            <div className="rec-skel-bar" style={{ width: '80%' }} />
           </div>
-        )}
-
-        {!hasContent && status === 'idle' && (
-          <div className="rec-empty">
-            <div style={{ fontSize: 36, marginBottom: 12 }}>✨</div>
-            <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 8 }}>No recommendation yet</div>
-            <div style={{ color: 'var(--text-muted)', fontSize: 15 }}>Tap refresh above to generate your daily coaching plan.</div>
-          </div>
-        )}
-
-        {hasContent && (
-          <>
-            <div className="rec-coach-para">
-              {renderMarkdown(firstPara)}
+        ) : !hasMessages ? (
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 700, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Suggested questions
             </div>
-            {rest && (
-              <div className="rec-sections">
-                {renderMarkdown(rest)}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {SUGGESTED_PROMPTS.map(p => (
+                <button
+                  key={p}
+                  onClick={() => sendMessage(p)}
+                  style={{
+                    background: 'var(--surface2)',
+                    border: '2px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '12px 14px',
+                    textAlign: 'left',
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: 'var(--navy)',
+                    cursor: 'pointer',
+                    fontFamily: 'Inter, sans-serif',
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={e => { (e.target as HTMLElement).style.borderColor = 'var(--navy)'; (e.target as HTMLElement).style.background = 'var(--sky-light)' }}
+                  onMouseLeave={e => { (e.target as HTMLElement).style.borderColor = 'var(--border)'; (e.target as HTMLElement).style.background = 'var(--surface2)' }}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            {messages.map(msg => (
+              <div key={msg.id} style={msg.role === 'user' ? {
+                alignSelf: 'flex-end',
+                background: 'var(--navy)',
+                color: '#fff',
+                borderRadius: '14px 14px 4px 14px',
+                padding: '12px 16px',
+                maxWidth: '85%',
+                fontSize: 15,
+                fontWeight: 500,
+                lineHeight: 1.5,
+              } : {
+                alignSelf: 'flex-start',
+                background: 'var(--surface2)',
+                borderLeft: '3px solid var(--sky)',
+                borderRadius: '4px 14px 14px 14px',
+                padding: '12px 16px',
+                maxWidth: '95%',
+                fontSize: 15,
+                lineHeight: 1.6,
+              }}>
+                {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
+              </div>
+            ))}
+            {isStreaming && streamingContent && (
+              <div style={{
+                alignSelf: 'flex-start',
+                background: 'var(--surface2)',
+                borderLeft: '3px solid var(--sky)',
+                borderRadius: '4px 14px 14px 14px',
+                padding: '12px 16px',
+                maxWidth: '95%',
+                fontSize: 15,
+                lineHeight: 1.6,
+              }}>
+                {renderMarkdown(streamingContent)}
+                <span className="rec-dots"><span>.</span><span>.</span><span>.</span></span>
+              </div>
+            )}
+            {isStreaming && !streamingContent && (
+              <div style={{ alignSelf: 'flex-start', color: 'var(--text-muted)', fontSize: 14, fontWeight: 600, padding: '8px 0' }}>
+                Thinking
+                <span className="rec-dots"><span>.</span><span>.</span><span>.</span></span>
               </div>
             )}
           </>
         )}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* CLEAR BUTTON (shown when there are messages) */}
+      {hasMessages && (
+        <div style={{ textAlign: 'right', marginBottom: 8 }}>
+          <button onClick={clearChat} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', fontWeight: 600 }}>
+            Clear chat
+          </button>
+        </div>
+      )}
+
+      {/* INPUT AREA */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'flex-end' }}>
+        <textarea
+          ref={textareaRef}
+          className="input"
+          placeholder="Ask your coach…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={2}
+          style={{ flex: 1, minHeight: 56, resize: 'none', fontSize: 16, padding: '14px 16px' }}
+          disabled={isStreaming}
+        />
+        <button
+          onClick={() => sendMessage(input)}
+          disabled={isStreaming || !input.trim()}
+          style={{
+            background: 'var(--navy)',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 'var(--radius-sm)',
+            padding: '14px 20px',
+            fontSize: 16,
+            fontWeight: 800,
+            cursor: isStreaming || !input.trim() ? 'not-allowed' : 'pointer',
+            opacity: isStreaming || !input.trim() ? 0.5 : 1,
+            fontFamily: 'Inter, sans-serif',
+            flexShrink: 0,
+            minHeight: 56,
+          }}
+        >
+          {isStreaming ? '…' : 'Send'}
+        </button>
       </div>
 
       {/* Protocol Context Editor */}
@@ -320,12 +431,12 @@ export default function RecommendationsPage() {
                 Cancel
               </button>
             </div>
-            <div className="rec-context-note">Changes take effect on next generation</div>
+            <div className="rec-context-note">Changes take effect on next message</div>
           </div>
         )}
       </div>
 
-      {/* History */}
+      {/* Past Recommendations */}
       <div className="rec-collapsible">
         <button
           className="rec-collapse-btn"

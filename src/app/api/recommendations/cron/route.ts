@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { generateRecommendation } from '@/lib/generateRecommendation'
+import { todayChicago } from '@/lib/dates'
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get('x-cron-secret')
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const today = new Date(); today.setHours(0,0,0,0)
+  const today = todayChicago()
   const existing = await prisma.recommendation.findUnique({ where: { date: today } })
   if (existing) {
     return NextResponse.json({ ok: true, cached: true })

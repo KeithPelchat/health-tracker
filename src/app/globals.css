@@ -188,8 +188,8 @@ textarea.input { resize: vertical; min-height: 88px; font-family: 'Inter', sans-
 /* ── Hydration ── */
 .glass-grid {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(13, 1fr);
+  gap: 6px;
   margin-bottom: 12px;
 }
 .glass-btn {

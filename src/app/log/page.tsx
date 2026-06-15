@@ -1,26 +1,23 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { toChicagoDateStr, formatChicagoDisplay } from '@/lib/dates'
 
 interface Meal {
   id: number
   name: string
   category: string
-  // protein
   proteinPer100g?: number | null
   fatPer100g?: number | null
   carbsPer100g?: number | null
   calsPer100g?: number | null
-  // countable
   proteinPerUnit?: number | null
   fatPerUnit?: number | null
   carbsPerUnit?: number | null
   calsPerUnit?: number | null
   unitLabel?: string | null
-  // vegetable
   carbsPer100gVeg?: number | null
   calsPer100gVeg?: number | null
-  // condiment
   proteinFixed?: number | null
   fatFixed?: number | null
   carbsFixed?: number | null
@@ -90,8 +87,22 @@ const BRISTOL_SHORT: { v: number; label: string }[] = [
   { v: 7, label: 'Watery' },
 ]
 
-function getTodayStr() {
-  return new Date().toISOString().split('T')[0]
+function offsetDateStr(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  const yy = dt.getUTCFullYear()
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getUTCDate()).padStart(2, '0')
+  return `${yy}-${mm}-${dd}`
+}
+
+function getDateLabel(dateStr: string, todayStr: string): string {
+  const diffMs = new Date(todayStr + 'T00:00:00Z').getTime() - new Date(dateStr + 'T00:00:00Z').getTime()
+  const diffDays = Math.round(diffMs / 86400000)
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long' })
 }
 
 // ── MealLogPanel Component ──────────────────────────────────────────────────
@@ -274,7 +285,14 @@ function MealLogPanel({ meal, today, openSlot, onLogged, onCancel }: MealLogPane
 // ── LogPage Component ───────────────────────────────────────────────────────
 
 export default function LogPage() {
-  const [today] = useState(getTodayStr)
+  const todayStr = toChicagoDateStr()
+  const [selectedDate, setSelectedDate] = useState(() => toChicagoDateStr())
+  const isToday = selectedDate === todayStr
+  const dateLabel = getDateLabel(selectedDate, todayStr)
+  const minDate = offsetDateStr(todayStr, -2)
+  const canGoPrev = selectedDate > minDate
+  const canGoNext = selectedDate < todayStr
+
   const [log, setLog] = useState<DailyLog>({})
   const [foodEntries, setFoodEntries] = useState<FoodEntry[]>([])
   const [bristolEntries, setBristolEntries] = useState<BristolEntry[]>([])
@@ -286,6 +304,8 @@ export default function LogPage() {
   const [mealSearch, setMealSearch] = useState('')
   const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null)
   const [customEntry, setCustomEntry] = useState({ desc: '', protein: '', fat: '', netCarbs: '', calories: '', saveAsMeal: false })
+  const [customLooking, setCustomLooking] = useState(false)
+  const [customAutoFilled, setCustomAutoFilled] = useState(false)
 
   const [saving, setSaving] = useState(false)
   const [showToast, setShowToast] = useState(false)
@@ -297,17 +317,18 @@ export default function LogPage() {
 
   const fetchAll = useCallback(async () => {
     const [logRes, foodRes, bristolRes, mealsRes] = await Promise.all([
-      fetch(`/api/log?date=${today}`).then(r => r.json()),
-      fetch(`/api/food?date=${today}`).then(r => r.json()),
-      fetch(`/api/bristol?date=${today}`).then(r => r.json()),
+      fetch(`/api/log?date=${selectedDate}`).then(r => r.json()),
+      fetch(`/api/food?date=${selectedDate}`).then(r => r.json()),
+      fetch(`/api/bristol?date=${selectedDate}`).then(r => r.json()),
       fetch('/api/meals').then(r => r.json()),
     ])
     if (logRes.log) setLog(logRes.log)
+    else setLog({})
     if (logRes.recentWeight != null) setRecentWeight(logRes.recentWeight)
     setFoodEntries(foodRes.entries || [])
     setBristolEntries(bristolRes.entries || [])
     setMeals(mealsRes.meals || [])
-  }, [today])
+  }, [selectedDate])
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -353,12 +374,32 @@ export default function LogPage() {
     const res = await fetch('/api/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...log, date: today }),
+      body: JSON.stringify({ ...log, date: selectedDate }),
     })
     setSaving(false)
     if (res.ok) {
       setShowToast(true)
       setTimeout(() => setShowToast(false), 2000)
+    }
+  }
+
+  async function handleCustomLookup() {
+    setCustomLooking(true)
+    const res = await fetch('/api/meals/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: customEntry.desc, category: 'countable' }),
+    }).then(r => r.json())
+    setCustomLooking(false)
+    if (!res.error) {
+      setCustomEntry(p => ({
+        ...p,
+        protein: res.protein != null ? String(res.protein) : p.protein,
+        fat: res.fat != null ? String(res.fat) : p.fat,
+        netCarbs: res.netCarbs != null ? String(res.netCarbs) : p.netCarbs,
+        calories: res.calories != null ? String(res.calories) : p.calories,
+      }))
+      setCustomAutoFilled(true)
     }
   }
 
@@ -385,7 +426,7 @@ export default function LogPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        date: today,
+        date: selectedDate,
         mealSlot: openSlot,
         mealId,
         customDesc: customEntry.desc || null,
@@ -397,7 +438,8 @@ export default function LogPage() {
     })
     setOpenSlot(null)
     setCustomEntry({ desc: '', protein: '', fat: '', netCarbs: '', calories: '', saveAsMeal: false })
-    const res = await fetch(`/api/food?date=${today}`).then(r => r.json())
+    setCustomAutoFilled(false)
+    const res = await fetch(`/api/food?date=${selectedDate}`).then(r => r.json())
     setFoodEntries(res.entries || [])
     const mealsRes = await fetch('/api/meals').then(r => r.json())
     setMeals(mealsRes.meals || [])
@@ -413,12 +455,12 @@ export default function LogPage() {
     await fetch('/api/bristol', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: today, value: bristolVal, timeOfDay: bristolTime || null }),
+      body: JSON.stringify({ date: selectedDate, value: bristolVal, timeOfDay: bristolTime || null }),
     })
     setBristolOpen(false)
     setBristolVal(null)
     setBristolTime('')
-    const res = await fetch(`/api/bristol?date=${today}`).then(r => r.json())
+    const res = await fetch(`/api/bristol?date=${selectedDate}`).then(r => r.json())
     setBristolEntries(res.entries || [])
   }
 
@@ -440,13 +482,14 @@ export default function LogPage() {
     }
   }
 
-  const glassesFilled = Math.round((Number(log.hydration) || 0) / 16)
+  // Hydration — 8oz per glass, 13 glasses (104oz max, 100oz target)
+  const glassesFilled = Math.round((Number(log.hydration) || 0) / 8)
 
   function handleGlass(i: number) {
     if (i < glassesFilled) {
-      setLogField('hydration', String(i * 16))
+      setLogField('hydration', String(i * 8))
     } else {
-      setLogField('hydration', String((i + 1) * 16))
+      setLogField('hydration', String((i + 1) * 8))
     }
   }
 
@@ -454,14 +497,40 @@ export default function LogPage() {
     m.name.toLowerCase().includes(mealSearch.toLowerCase())
   )
 
+  const navBtnStyle = (enabled: boolean) => ({
+    background: 'none', border: 'none',
+    cursor: enabled ? 'pointer' : 'default',
+    color: enabled ? 'var(--navy)' : 'var(--border)',
+    fontSize: 22, padding: '2px 12px', lineHeight: 1,
+    fontWeight: 700,
+  } as React.CSSProperties)
+
   return (
     <div className="page">
+      {/* HEADER */}
       <div className="page-hdr">
         <button className={`refresh-btn${refreshing ? ' spinning' : ''}`} onClick={handleRefresh} aria-label="Refresh">↻</button>
-        <h1 className="page-title">Daily Log</h1>
-        <div className="page-sub">{new Date(today + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
+        <h1 className="page-title">Daily Log{!isToday ? ` — ${dateLabel}` : ''}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', margin: '8px 0 2px' }}>
+          <button style={navBtnStyle(canGoPrev)} onClick={() => canGoPrev && setSelectedDate(offsetDateStr(selectedDate, -1))} disabled={!canGoPrev} aria-label="Previous day">←</button>
+          <span style={{ flex: 1, textAlign: 'center', fontWeight: 700, fontSize: 15, color: 'var(--sky)' }}>{dateLabel}</span>
+          <button style={navBtnStyle(canGoNext)} onClick={() => canGoNext && setSelectedDate(offsetDateStr(selectedDate, 1))} disabled={!canGoNext} aria-label="Next day">→</button>
+        </div>
+        <div className="page-sub" style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 0 }}>{formatChicagoDisplay(selectedDate)}</div>
         <div className="page-accent" />
       </div>
+
+      {/* EDITING BANNER */}
+      {!isToday && (
+        <div style={{
+          background: 'var(--gold-bg)', color: 'var(--navy)',
+          fontSize: 13, textAlign: 'center', padding: 8,
+          width: '100%', marginBottom: 16, borderRadius: 8,
+          fontWeight: 700,
+        }}>
+          Editing {formatChicagoDisplay(selectedDate)}
+        </div>
+      )}
 
       {/* MACRO SUMMARY */}
       <div className="card card-macro">
@@ -665,13 +734,13 @@ export default function LogPage() {
                       {selectedMeal ? (
                         <MealLogPanel
                           meal={selectedMeal}
-                          today={today}
+                          today={selectedDate}
                           openSlot={openSlot!}
                           onLogged={async () => {
                             setOpenSlot(null)
                             setSelectedMeal(null)
                             setMealSearch('')
-                            const res = await fetch(`/api/food?date=${today}`).then(r => r.json())
+                            const res = await fetch(`/api/food?date=${selectedDate}`).then(r => r.json())
                             setFoodEntries(res.entries || [])
                             const mealsRes = await fetch('/api/meals').then(r => r.json())
                             setMeals(mealsRes.meals || [])
@@ -705,26 +774,52 @@ export default function LogPage() {
                     <>
                       <div className="field-col" style={{ marginBottom: 10 }}>
                         <label className="field-lbl">Description</label>
-                        <input className="input" placeholder="Food description" value={customEntry.desc} onChange={e => setCustomEntry(p => ({ ...p, desc: e.target.value }))} />
+                        <input className="input" placeholder="Food description" value={customEntry.desc}
+                          onChange={e => { setCustomEntry(p => ({ ...p, desc: e.target.value })); setCustomAutoFilled(false) }} />
                       </div>
+                      {customEntry.desc.length >= 3 && (
+                        <div style={{ marginBottom: 10 }}>
+                          <button
+                            className="btn-add-slot"
+                            style={{ marginTop: 0 }}
+                            onClick={handleCustomLookup}
+                            disabled={customLooking}
+                          >
+                            {customLooking ? 'Looking up…' : '🔍 Look up nutrition'}
+                          </button>
+                          {customAutoFilled && (
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', marginTop: 4 }}>
+                              ⚠️ AI estimate — verify if precision matters
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div className="field-row">
                         <div className="field-col">
                           <label className="field-lbl">Protein (g)</label>
-                          <input className="input" type="number" step="0.1" value={customEntry.protein} onChange={e => setCustomEntry(p => ({ ...p, protein: e.target.value }))} />
+                          <input className="input" type="number" step="0.1" value={customEntry.protein}
+                            style={{ background: customAutoFilled ? 'var(--sky-light)' : undefined }}
+                            onChange={e => setCustomEntry(p => ({ ...p, protein: e.target.value }))} />
                         </div>
                         <div className="field-col">
                           <label className="field-lbl">Fat (g)</label>
-                          <input className="input" type="number" step="0.1" value={customEntry.fat} onChange={e => setCustomEntry(p => ({ ...p, fat: e.target.value }))} />
+                          <input className="input" type="number" step="0.1" value={customEntry.fat}
+                            style={{ background: customAutoFilled ? 'var(--sky-light)' : undefined }}
+                            onChange={e => setCustomEntry(p => ({ ...p, fat: e.target.value }))} />
                         </div>
                       </div>
                       <div className="field-row">
                         <div className="field-col">
                           <label className="field-lbl">Net Carbs (g)</label>
-                          <input className="input" type="number" step="0.1" value={customEntry.netCarbs} onChange={e => setCustomEntry(p => ({ ...p, netCarbs: e.target.value }))} />
+                          <input className="input" type="number" step="0.1" value={customEntry.netCarbs}
+                            style={{ background: customAutoFilled ? 'var(--sky-light)' : undefined }}
+                            onChange={e => setCustomEntry(p => ({ ...p, netCarbs: e.target.value }))} />
                         </div>
                         <div className="field-col">
                           <label className="field-lbl">Calories</label>
-                          <input className="input" type="number" value={customEntry.calories} onChange={e => setCustomEntry(p => ({ ...p, calories: e.target.value }))} />
+                          <input className="input" type="number" value={customEntry.calories}
+                            style={{ background: customAutoFilled ? 'var(--sky-light)' : undefined }}
+                            onChange={e => setCustomEntry(p => ({ ...p, calories: e.target.value }))} />
                         </div>
                       </div>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-muted)', marginBottom: 10, cursor: 'pointer' }}>
@@ -735,7 +830,7 @@ export default function LogPage() {
                     </>
                   )}
                   <div style={{ textAlign: 'center', marginTop: 10 }}>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }} onClick={() => { setOpenSlot(null); }}>Cancel</button>
+                    <button style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer' }} onClick={() => { setOpenSlot(null); setCustomAutoFilled(false) }}>Cancel</button>
                   </div>
                 </div>
               )}
@@ -794,21 +889,20 @@ export default function LogPage() {
         )}
       </div>
 
-      {/* HYDRATION */}
+      {/* HYDRATION — 8oz per glass, 13 glasses, 100oz target */}
       <div className="card card-hydration">
         <div className="section-label">Hydration</div>
-        <div className="glass-grid">
-          {Array.from({ length: 8 }, (_, i) => (
+        <div className="glass-grid" style={{ gridTemplateColumns: 'repeat(13, 1fr)' }}>
+          {Array.from({ length: 13 }, (_, i) => (
             <button key={i} className={`glass-btn${i < glassesFilled ? ' filled' : ''}`} onClick={() => handleGlass(i)}>
               {i < glassesFilled ? '💧' : ''}
             </button>
           ))}
         </div>
         <div className={`hydration-info${(Number(log.hydration) || 0) >= 100 ? ' goal' : ''}`}>
-          {Number(log.hydration) || 0} oz
           {(Number(log.hydration) || 0) >= 100
-            ? ' — Goal hit! 🎉'
-            : ` — ${100 - (Number(log.hydration) || 0)} oz to 100 oz goal`
+            ? `✓ 100oz target hit! (${Number(log.hydration) || 0}oz total)`
+            : `${Number(log.hydration) || 0}oz — ${100 - (Number(log.hydration) || 0)} more to 100oz goal`
           }
         </div>
       </div>
@@ -867,10 +961,10 @@ export default function LogPage() {
 
       {/* SAVE */}
       <button className="btn-primary" onClick={handleSave} disabled={saving}>
-        {saving ? 'Saving…' : 'Save Check-in'}
+        {saving ? 'Saving…' : isToday ? 'Save Check-in' : `Update ${dateLabel}`}
       </button>
 
-      {showToast && <div className="toast">Saved ✓</div>}
+      {showToast && <div className="toast">{isToday ? 'Saved ✓' : 'Updated ✓'}</div>}
     </div>
   )
 }
