@@ -7,6 +7,7 @@ interface ChatMessage {
   id: string | number
   role: 'user' | 'assistant'
   content: string
+  imageUrl?: string // ephemeral, client-only, never persisted
 }
 
 interface HistoryRec {
@@ -114,6 +115,13 @@ export default function CoachPage() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
 
+  const [attachedImage, setAttachedImage] = useState<{
+    file: File
+    previewUrl: string
+    mimeType: string
+  } | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
+
   const [showContext, setShowContext] = useState(false)
   const [contextText, setContextText] = useState('')
   const [savingContext, setSavingContext] = useState(false)
@@ -125,6 +133,7 @@ export default function CoachPage() {
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -144,33 +153,64 @@ export default function CoachPage() {
 
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim()
-    if (isStreaming || !trimmed) return
+    if (isStreaming || (!trimmed && !attachedImage)) return
 
-    // Save user message to DB, get back its id
+    const imageToSend = attachedImage
+
+    // Save user message to DB (text only — images are ephemeral)
     const savedUser = await fetch('/api/coach/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ date: todayStr, role: 'user', content: trimmed }),
     }).then(r => r.json())
 
-    const userMsg: ChatMessage = savedUser.message ?? { id: `u-${Date.now()}`, role: 'user', content: trimmed }
+    const userMsg: ChatMessage = {
+      ...(savedUser.message ?? { id: `u-${Date.now()}`, role: 'user', content: trimmed }),
+      imageUrl: imageToSend?.previewUrl,
+    }
     const newMessages = [...messages, userMsg]
     setMessages(newMessages)
     setInput('')
+    setAttachedImage(null)
+    setImageError(null)
     setIsStreaming(true)
     setStreamingContent('')
 
     abortRef.current = new AbortController()
 
     try {
-      const res = await fetch('/api/coach/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
-        }),
-        signal: abortRef.current.signal,
-      })
+      let res: Response
+
+      if (imageToSend) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve((reader.result as string).split(',')[1])
+          reader.onerror = () => reject(new Error('Failed to read image file'))
+          reader.readAsDataURL(imageToSend.file)
+        })
+
+        res = await fetch('/api/coach/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            // Send prior messages (without the current user turn — server appends image turn)
+            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            message: trimmed,
+            imageBase64: base64,
+            mimeType: imageToSend.mimeType || 'image/jpeg',
+          }),
+          signal: abortRef.current.signal,
+        })
+      } else {
+        res = await fetch('/api/coach/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+          }),
+          signal: abortRef.current.signal,
+        })
+      }
 
       if (!res.ok || !res.body) throw new Error('Request failed')
 
@@ -202,13 +242,32 @@ export default function CoachPage() {
       setIsStreaming(false)
       setStreamingContent('')
     }
-  }, [isStreaming, messages, todayStr])
+  }, [isStreaming, messages, todayStr, attachedImage])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       sendMessage(input)
     }
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 5 * 1024 * 1024) {
+      setImageError('Image too large (max 5MB)')
+      e.target.value = ''
+      return
+    }
+    setImageError(null)
+    setAttachedImage({ file, previewUrl: URL.createObjectURL(file), mimeType: file.type })
+    e.target.value = ''
+  }
+
+  function removeImage() {
+    if (attachedImage) URL.revokeObjectURL(attachedImage.previewUrl)
+    setAttachedImage(null)
+    setImageError(null)
   }
 
   function clearChat() {
@@ -323,6 +382,18 @@ export default function CoachPage() {
                 fontSize: 15,
                 lineHeight: 1.6,
               }}>
+                {msg.role === 'user' && msg.imageUrl && (
+                  <img
+                    src={msg.imageUrl}
+                    alt=""
+                    style={{
+                      maxWidth: 200,
+                      borderRadius: 12,
+                      display: 'block',
+                      marginBottom: msg.content ? 8 : 0,
+                    }}
+                  />
+                )}
                 {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
               </div>
             ))}
@@ -362,38 +433,125 @@ export default function CoachPage() {
       )}
 
       {/* INPUT AREA */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'flex-end' }}>
-        <textarea
-          ref={textareaRef}
-          className="input"
-          placeholder="Ask your coach…"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={2}
-          style={{ flex: 1, minHeight: 56, resize: 'none', fontSize: 16, padding: '14px 16px' }}
-          disabled={isStreaming}
+      <div style={{ marginBottom: 16 }}>
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
         />
-        <button
-          onClick={() => sendMessage(input)}
-          disabled={isStreaming || !input.trim()}
-          style={{
-            background: 'var(--navy)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 'var(--radius-sm)',
-            padding: '14px 20px',
-            fontSize: 16,
-            fontWeight: 800,
-            cursor: isStreaming || !input.trim() ? 'not-allowed' : 'pointer',
-            opacity: isStreaming || !input.trim() ? 0.5 : 1,
-            fontFamily: 'Inter, sans-serif',
-            flexShrink: 0,
-            minHeight: 56,
-          }}
-        >
-          {isStreaming ? '…' : 'Send'}
-        </button>
+
+        {/* Thumbnail preview */}
+        {attachedImage && (
+          <div style={{ marginBottom: 8, position: 'relative', display: 'inline-block' }}>
+            <img
+              src={attachedImage.previewUrl}
+              alt=""
+              style={{
+                width: 80,
+                height: 80,
+                objectFit: 'cover',
+                borderRadius: 8,
+                border: '1.5px solid var(--border)',
+                display: 'block',
+              }}
+            />
+            <button
+              onClick={removeImage}
+              style={{
+                position: 'absolute',
+                top: -6,
+                right: -6,
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: 'var(--navy)',
+                color: '#fff',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: 1,
+                padding: 0,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Error message */}
+        {imageError && (
+          <div style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600, marginBottom: 6 }}>
+            {imageError}
+          </div>
+        )}
+
+        {/* Input row */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+          {/* Camera button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isStreaming}
+            title="Attach image"
+            style={{
+              background: 'var(--surface2)',
+              color: 'var(--sky)',
+              border: '2px solid var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '14px 14px',
+              fontSize: 18,
+              cursor: isStreaming ? 'not-allowed' : 'pointer',
+              opacity: isStreaming ? 0.5 : 1,
+              flexShrink: 0,
+              minHeight: 56,
+              lineHeight: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            📷
+          </button>
+
+          <textarea
+            ref={textareaRef}
+            className="input"
+            placeholder="Ask your coach…"
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+            style={{ flex: 1, minHeight: 56, resize: 'none', fontSize: 16, padding: '14px 16px' }}
+            disabled={isStreaming}
+          />
+          <button
+            onClick={() => sendMessage(input)}
+            disabled={isStreaming || (!input.trim() && !attachedImage)}
+            style={{
+              background: 'var(--navy)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 'var(--radius-sm)',
+              padding: '14px 20px',
+              fontSize: 16,
+              fontWeight: 800,
+              cursor: isStreaming || (!input.trim() && !attachedImage) ? 'not-allowed' : 'pointer',
+              opacity: isStreaming || (!input.trim() && !attachedImage) ? 0.5 : 1,
+              fontFamily: 'Inter, sans-serif',
+              flexShrink: 0,
+              minHeight: 56,
+            }}
+          >
+            {isStreaming ? '…' : 'Send'}
+          </button>
+        </div>
       </div>
 
       {/* Protocol Context Editor */}
