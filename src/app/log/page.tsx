@@ -62,6 +62,7 @@ interface DailyLog {
   walkMiles?: number | null
   walkMins?: number | null
   walkSecs?: number | null
+  walkAvgHR?: number | null
   notes?: string | null
 }
 
@@ -367,7 +368,27 @@ export default function LogPage() {
     ? Math.round(3.8 * (effectiveWeight / 2.205) * (walkTotalSecs / 3600))
     : null
 
-  const netCals = totalCals - (walkBurnKcal ?? 0)
+  // TDEE baseline (Mifflin-St Jeor, sedentary)
+  const tdeeWeightKg = effectiveWeight != null ? effectiveWeight / 2.205 : 99.3
+  const birthDate = new Date(Date.UTC(1965, 0, 21))
+  const nowDate = new Date()
+  let ageYears = nowDate.getFullYear() - birthDate.getFullYear()
+  const ageM = nowDate.getMonth() - birthDate.getMonth()
+  if (ageM < 0 || (ageM === 0 && nowDate.getDate() < birthDate.getDate())) ageYears--
+  const tdeeBaseline = Math.round(((10 * tdeeWeightKg) + (6.25 * 166.4) - (5 * ageYears) + 5) * 1.2)
+
+  const totalCaloriesOut = tdeeBaseline + (walkBurnKcal ?? 0)
+  const netCals = totalCals - totalCaloriesOut
+
+  // Walk HR zone label
+  const walkHR = log.walkAvgHR as number | null | undefined
+  function getHRZone(hr: number): { label: string; color: string } {
+    if (hr < 100) return { label: 'Easy pace', color: 'var(--text-muted)' }
+    if (hr < 120) return { label: 'Moderate', color: 'var(--gold)' }
+    if (hr < 140) return { label: 'Brisk ✓', color: 'var(--green)' }
+    if (hr < 160) return { label: 'Vigorous', color: 'var(--sky)' }
+    return { label: 'High intensity', color: 'var(--red)' }
+  }
 
   async function handleSave() {
     setSaving(true)
@@ -590,6 +611,14 @@ export default function LogPage() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 600 }}>
             <span style={{ color: 'var(--text-muted)' }}>Calories Out</span>
+            <span>~{totalCaloriesOut} kcal</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-muted)', paddingLeft: 16 }}>
+            <span>Baseline</span>
+            <span>~{tdeeBaseline} kcal (BMR × 1.2)</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-muted)', paddingLeft: 16 }}>
+            <span>Walk burn</span>
             <span>{walkBurnKcal !== null ? `~${walkBurnKcal} kcal` : '—'}</span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 800 }}>
@@ -598,9 +627,13 @@ export default function LogPage() {
               {netCals} kcal
             </span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>* Walk burn estimate only</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>* Baseline uses BMR × 1.2 (sedentary). Walk burn adds MET 3.8 estimate.</div>
         </div>
       </div>
+
+      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)' }} onClick={handleSave} disabled={saving}>
+        {saving ? 'Saving…' : isToday ? 'Save Check-in' : `Update ${dateLabel}`}
+      </button>
 
       {/* BIOMETRICS */}
       <div className="card card-bio">
@@ -650,7 +683,7 @@ export default function LogPage() {
         )}
         <div className="field-row">
           <div className="field-col">
-            <label className="field-lbl">Sleep Score (0–100)</label>
+            <label className="field-lbl">Sleep Score</label>
             <input className="input" type="number" min="0" max="100" placeholder="—"
               value={log.sleepScore ?? ''}
               onChange={e => setLogField('sleepScore', e.target.value ? Number(e.target.value) : null)} />
@@ -839,6 +872,10 @@ export default function LogPage() {
         })}
       </div>
 
+      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)' }} onClick={handleSave} disabled={saving}>
+        {saving ? 'Saving…' : isToday ? 'Save Check-in' : `Update ${dateLabel}`}
+      </button>
+
       {/* BRISTOL */}
       <div className="card card-bristol">
         <div className="section-label">GI / Bristol Scale</div>
@@ -892,7 +929,7 @@ export default function LogPage() {
       {/* HYDRATION — 8oz per glass, 13 glasses, 100oz target */}
       <div className="card card-hydration">
         <div className="section-label">Hydration</div>
-        <div className="glass-grid" style={{ gridTemplateColumns: 'repeat(13, 1fr)' }}>
+        <div className="glass-grid" style={{ gridTemplateColumns: 'repeat(7, 1fr)' }}>
           {Array.from({ length: 13 }, (_, i) => (
             <button key={i} className={`glass-btn${i < glassesFilled ? ' filled' : ''}`} onClick={() => handleGlass(i)}>
               {i < glassesFilled ? '💧' : ''}
@@ -945,9 +982,21 @@ export default function LogPage() {
               <span className="walk-time-sep">s</span>
             </div>
           </div>
+          <div className="field-col">
+            <label className="field-lbl">Avg HR</label>
+            <input className="input" type="number" placeholder="—" value={log.walkAvgHR ?? ''} onChange={e => setLogField('walkAvgHR', e.target.value)} />
+          </div>
         </div>
+        {walkHR != null && walkHR > 0 && (() => {
+          const zone = getHRZone(walkHR)
+          return (
+            <div style={{ fontSize: 13, fontWeight: 600, color: zone.color, marginTop: 6 }}>
+              {zone.label}
+            </div>
+          )
+        })()}
         {walkTotalSecs > 0 && walkBurnKcal !== null && (
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sky)', marginTop: 6 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--sky)', marginTop: 4 }}>
             ~{walkBurnKcal} kcal burned
           </div>
         )}
@@ -960,7 +1009,7 @@ export default function LogPage() {
       </div>
 
       {/* SAVE */}
-      <button className="btn-primary" onClick={handleSave} disabled={saving}>
+      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)' }} onClick={handleSave} disabled={saving}>
         {saving ? 'Saving…' : isToday ? 'Save Check-in' : `Update ${dateLabel}`}
       </button>
 

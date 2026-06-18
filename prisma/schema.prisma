@@ -29,9 +29,10 @@ model DailyLog {
 
   hydration Int?
 
-  walkMiles Float?
-  walkMins  Int?
-  walkSecs  Int?
+  walkMiles   Float?
+  walkMins    Int?
+  walkSecs    Int?
+  walkAvgHR   Int?
 
   notes     String?
 }

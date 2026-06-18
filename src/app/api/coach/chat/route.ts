@@ -35,7 +35,8 @@ Guidelines:
 - Keep responses focused and actionable (aim for 150-300 words unless more detail is truly needed)
 - Never recommend anything that conflicts with his cardiac medications (lisinopril, atorvastatin, aspirin 81mg)
 - Always consider GI impact first when suggesting foods
-- Keep the mid-August physician follow-up (198.8 lb goal) in view`
+- Keep the mid-August physician follow-up (198.8 lb goal) in view
+- Keith's BMR baseline (sedentary, BMR×1.2) is approximately 2,000-2,200 kcal depending on current weight. His protocol targets ~1,500-1,600 kcal intake, creating a ~600-700 kcal daily deficit before walk burn. Reference actual calculated values from the data summary when discussing his deficit.`
 
     const encoder = new TextEncoder()
     const stream = new ReadableStream<Uint8Array>({

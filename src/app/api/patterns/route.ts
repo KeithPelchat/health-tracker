@@ -3,6 +3,27 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 
+const TDEE_HEIGHT_CM = 166.4
+const TDEE_BIRTH_YEAR = 1965
+const TDEE_BIRTH_MONTH = 1 // January
+const TDEE_BIRTH_DAY = 21
+const TDEE_FALLBACK_WEIGHT_KG = 99.3 // 219 lbs
+
+function calcAge(now: Date): number {
+  const birthDate = new Date(Date.UTC(TDEE_BIRTH_YEAR, TDEE_BIRTH_MONTH - 1, TDEE_BIRTH_DAY))
+  let age = now.getFullYear() - birthDate.getFullYear()
+  const m = now.getMonth() - birthDate.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < birthDate.getDate())) age--
+  return age
+}
+
+function calcTdee(weightLbs: number | null, now: Date): number {
+  const weightKg = weightLbs != null ? weightLbs / 2.205 : TDEE_FALLBACK_WEIGHT_KG
+  const age = calcAge(now)
+  const bmr = (10 * weightKg) + (6.25 * TDEE_HEIGHT_CM) - (5 * age) + 5
+  return Math.round(bmr * 1.2)
+}
+
 function calcBurn(walkMins: number, weightLbs: number, walkSecs = 0): number {
   const MET = 3.8
   const weightKg = weightLbs / 2.205
@@ -31,7 +52,7 @@ export async function GET(req: NextRequest) {
     prisma.dailyLog.findMany({
       where: whereDate,
       orderBy: { date: 'asc' },
-      select: { date: true, weight: true, bpSys: true, bpDia: true, hydration: true, walkMiles: true, walkMins: true, walkSecs: true, sleepScore: true, sleepHours: true, sleepMins: true, sleepQuality: true },
+      select: { date: true, weight: true, bpSys: true, bpDia: true, hydration: true, walkMiles: true, walkMins: true, walkSecs: true, walkAvgHR: true, sleepScore: true, sleepHours: true, sleepMins: true, sleepQuality: true },
     }),
     prisma.foodEntry.groupBy({
       by: ['date'],
@@ -104,11 +125,25 @@ export async function GET(req: NextRequest) {
   const walkCount = walkData.length
   const walkAvg = walkCount > 0 ? Math.round((walkTotal / walkCount) * 10) / 10 : 0
 
+  // Walk HR trend
+  const walkHRData = dailyLogs.filter(l => l.walkAvgHR !== null)
+  const walkHRTrend = walkHRData.map(l => ({
+    date: l.date.toISOString().split('T')[0],
+    walkAvgHR: l.walkAvgHR!,
+  }))
+  const walkHRAvg = walkHRData.length > 0
+    ? Math.round(walkHRData.reduce((s, l) => s + l.walkAvgHR!, 0) / walkHRData.length)
+    : null
+
   // Avg weight
   const weightData = dailyLogs.filter(l => l.weight !== null)
   const avgWeight = weightData.length > 0
     ? Math.round((weightData.reduce((s, l) => s + l.weight!, 0) / weightData.length) * 10) / 10
     : null
+
+  // TDEE baseline — use most recent weight available
+  const mostRecentWeight = weightData.length > 0 ? weightData[weightData.length - 1].weight : null
+  const tdeeBaseline = calcTdee(mostRecentWeight, now)
 
   // Walk burn - fetch all weight logs ordered desc for "most recent prior weight" lookup
   const allWeightLogs = await prisma.dailyLog.findMany({
@@ -218,9 +253,12 @@ export async function GET(req: NextRequest) {
     walkTotal: Math.round(walkTotal * 10) / 10,
     walkCount,
     walkAvg,
+    walkHRTrend,
+    walkHRAvg,
     avgWeight,
     totalDays: dailyLogs.length,
     walkBurn,
+    tdeeBaseline,
     sleepTrend,
     sleepStats,
     sleepWeightCorr,

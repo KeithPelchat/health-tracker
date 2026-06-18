@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
       walkMiles: fields.walkMiles !== undefined ? Number(fields.walkMiles) || null : undefined,
       walkMins: fields.walkMins !== undefined ? Number(fields.walkMins) || null : undefined,
       walkSecs: fields.walkSecs !== undefined ? Number(fields.walkSecs) || null : undefined,
+      walkAvgHR: fields.walkAvgHR !== undefined ? Number(fields.walkAvgHR) || null : undefined,
       notes: fields.notes !== undefined ? fields.notes || null : undefined,
     },
     create: {
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
       walkMiles: fields.walkMiles ? Number(fields.walkMiles) : null,
       walkMins: fields.walkMins ? Number(fields.walkMins) : null,
       walkSecs: fields.walkSecs ? Number(fields.walkSecs) : null,
+      walkAvgHR: fields.walkAvgHR ? Number(fields.walkAvgHR) : null,
       notes: fields.notes || null,
     },
   })

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, ReferenceLine, Cell,
+  ResponsiveContainer, ReferenceLine, ReferenceArea, Cell,
   ComposedChart,
 } from 'recharts'
 
@@ -43,9 +43,12 @@ interface PatternsData {
   walkTotal: number
   walkCount: number
   walkAvg: number
+  walkHRTrend: { date: string; walkAvgHR: number }[]
+  walkHRAvg: number | null
   avgWeight: number | null
   totalDays: number
   walkBurn: { date: string; burnKcal: number }[]
+  tdeeBaseline: number
   sleepTrend: SleepTrendPoint[]
   sleepStats: SleepStats
   sleepWeightCorr: SleepWeightCorr
@@ -248,18 +251,28 @@ export default function PatternsPage() {
                   <Tooltip {...TOOLTIP_STYLE} />
                   <Legend />
                   <ReferenceLine y={1600} stroke="#4a6080" strokeDasharray="4 4" label={{ value: '1600 kcal', fill: '#4a6080', fontSize: 10 }} />
+                  <ReferenceLine y={data.tdeeBaseline} stroke="#4a6080" strokeDasharray="8 4" label={{ value: 'BMR baseline', fill: '#4a6080', fontSize: 10 }} />
                   <Bar dataKey="calories" name="Calories In" fill="#2980b9" radius={[4, 4, 0, 0]} />
                   <Line type="monotone" dataKey="burnKcal" name="Walk Burn" stroke="#e67e22" strokeDasharray="5 3" dot={false} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
             {data.dailyCalories.length > 0 && (() => {
-              const avgNet = Math.round(
-                data.dailyCalories.reduce((s, d) => s + d.calories - (d.burnKcal ?? 0), 0) / data.dailyCalories.length
-              )
+              const daysWithCals = data.dailyCalories.filter(d => d.calories > 0)
+              const avgNet = daysWithCals.length > 0
+                ? Math.round(daysWithCals.reduce((s, d) => s + d.calories, 0) / daysWithCals.length)
+                : 0
+              const avgBurn = daysWithCals.length > 0
+                ? Math.round(daysWithCals.reduce((s, d) => s + (d.burnKcal ?? 0), 0) / daysWithCals.length)
+                : 0
+              const avgDeficit = data.tdeeBaseline + avgBurn - avgNet
+              const deficitColor = avgDeficit > 0 ? 'var(--green)' : 'var(--red)'
               return (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
-                  Avg net calories: {avgNet} kcal/day
+                  Avg net calories: {avgNet} kcal/day &nbsp;·&nbsp;{' '}
+                  <span style={{ color: deficitColor }}>
+                    Avg deficit vs baseline: {avgDeficit > 0 ? '+' : ''}{avgDeficit} kcal/day
+                  </span>
                 </div>
               )
             })()}
@@ -304,6 +317,39 @@ export default function PatternsPage() {
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
               {data.walkTotal} total miles — {data.walkCount} walks logged — avg {data.walkAvg} miles/walk
             </div>
+          </div>
+
+          {/* Walk Heart Rate Trend */}
+          <div className="chart-card">
+            <div className="chart-title">Walk Heart Rate Trend</div>
+            <div className="chart-sub">Avg bpm per walk</div>
+            {data.walkHRTrend.length < 3 ? (
+              <div style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
+                Log more walks with HR to see trends
+              </div>
+            ) : (
+              <>
+                <div style={{ height: 160 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={data.walkHRTrend}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#c8d6e8" />
+                      <XAxis dataKey="date" tickFormatter={fmtDate} {...AXIS_STYLE} />
+                      <YAxis {...AXIS_STYLE} domain={['auto', 'auto']} />
+                      <Tooltip {...TOOLTIP_STYLE} />
+                      <ReferenceArea y1={100} y2={120} fill="rgba(160,120,0,0.08)" label={{ value: 'Moderate', fill: '#a07800', fontSize: 10, position: 'insideTopRight' }} />
+                      <ReferenceArea y1={120} y2={140} fill="rgba(26,122,74,0.08)" label={{ value: 'Brisk ✓', fill: '#1a7a4a', fontSize: 10, position: 'insideTopRight' }} />
+                      <ReferenceArea y1={140} y2={200} fill="rgba(176,32,32,0.06)" label={{ value: 'Vigorous', fill: '#b02020', fontSize: 10, position: 'insideTopRight' }} />
+                      <Line type="monotone" dataKey="walkAvgHR" name="Avg HR" stroke="var(--red)" strokeWidth={2} dot={{ r: 4, fill: 'var(--red)' }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                {data.walkHRAvg != null && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
+                    Avg walk HR: {data.walkHRAvg}bpm over this period
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </>
       )}

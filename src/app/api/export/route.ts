@@ -4,6 +4,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { todayChicago } from '@/lib/dates'
 
+const TDEE_HEIGHT_CM = 166.4
+const TDEE_FALLBACK_WEIGHT_KG = 99.3
+
+function calcExportTdee(weightLbs: number | null): number {
+  const weightKg = weightLbs != null ? weightLbs / 2.205 : TDEE_FALLBACK_WEIGHT_KG
+  const birthDate = new Date(Date.UTC(1965, 0, 21))
+  const now = new Date()
+  let age = now.getFullYear() - birthDate.getFullYear()
+  const m = now.getMonth() - birthDate.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < birthDate.getDate())) age--
+  const bmr = (10 * weightKg) + (6.25 * TDEE_HEIGHT_CM) - (5 * age) + 5
+  return Math.round(bmr * 1.2)
+}
+
 const BRISTOL_LABELS: Record<number, string> = {
   1: 'Separate hard lumps',
   2: 'Lumpy sausage',
@@ -104,7 +118,13 @@ export async function GET(req: NextRequest) {
     if (log.hydration != null) block1 += `Hydration: ${log.hydration} oz\n`
     if (log.walkMiles) {
       const wt = log.walkMins != null ? `${log.walkMins}m${log.walkSecs ? `${log.walkSecs}s` : ''}` : ''
-      block1 += `Walk: ${log.walkMiles} miles${wt ? ` (${wt})` : ''}\n`
+      const hr = (log as { walkAvgHR?: number | null }).walkAvgHR
+      const walkBurnKcal = log.walkMins != null
+        ? Math.round(3.8 * ((log.weight ?? 219) / 2.205) * (((log.walkMins ?? 0) * 60 + ((log as { walkSecs?: number | null }).walkSecs ?? 0)) / 3600))
+        : null
+      const hrPart = hr != null ? ` / ${hr}bpm avg HR` : ''
+      const burnPart = walkBurnKcal != null ? ` (~${walkBurnKcal}kcal)` : ''
+      block1 += `**Walking:** ${log.walkMiles}mi${wt ? ` / ${wt}` : ''}${hrPart}${burnPart}\n`
     }
 
     const foods = foodByDate[dateStr] || []
@@ -126,7 +146,12 @@ export async function GET(req: NextRequest) {
       const totC = foods.reduce((s, f) => s + f.netCarbs, 0)
       const totF = foods.reduce((s, f) => s + f.fat, 0)
       const totCal = foods.reduce((s, f) => s + f.calories, 0)
-      block1 += `  TOTALS: P${Math.round(totP)}g F${Math.round(totF)}g C${Math.round(totC)}g ${totCal}kcal\n`
+      const dayBaseline = calcExportTdee(log.weight)
+      const dayWalkBurn = log.walkMins != null
+        ? Math.round(3.8 * ((log.weight ?? 219) / 2.205) * (((log.walkMins ?? 0) * 60 + ((log as { walkSecs?: number | null }).walkSecs ?? 0)) / 3600))
+        : 0
+      const dayNet = totCal - (dayBaseline + dayWalkBurn)
+      block1 += `  **Daily Totals:** P${Math.round(totP)}g / F${Math.round(totF)}g / NC${Math.round(totC)}g / ${totCal}kcal in / ~${dayBaseline}kcal baseline / ~${dayWalkBurn}kcal walk / ~${dayNet}kcal net\n`
     }
 
     const bristols = bristolByDate[dateStr] || []

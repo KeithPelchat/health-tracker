@@ -15,6 +15,7 @@ interface DailyLog {
   hydration: number | null
   walkMiles: number | null
   walkMins: number | null
+  walkAvgHR: number | null
   notes: string | null
 }
 
@@ -146,7 +147,9 @@ export default function HistoryPage() {
                 </span>
               )}
               {log.walkMiles != null && (
-                <span className="chip chip-blue">{log.walkMiles} mi 🚶</span>
+                <span className="chip chip-blue">
+                  🚶 {log.walkMiles} mi{log.walkAvgHR != null ? ` · ${log.walkAvgHR}bpm` : ''}
+                </span>
               )}
               {log.amSupp && <span className="chip chip-green">AM ✓</span>}
               {log.pmSupp && <span className="chip chip-green">PM ✓</span>}

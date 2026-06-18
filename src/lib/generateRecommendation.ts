@@ -3,6 +3,27 @@ import { ensureProtocolContext } from './seedProtocol'
 import { todayChicago } from './dates'
 import Anthropic from '@anthropic-ai/sdk'
 
+const TDEE_HEIGHT_CM = 166.4
+const TDEE_FALLBACK_WEIGHT_KG = 99.3
+
+function calcTdeeForSummary(weightLbs: number | null, now: Date): number {
+  const weightKg = weightLbs != null ? weightLbs / 2.205 : TDEE_FALLBACK_WEIGHT_KG
+  const birthDate = new Date(Date.UTC(1965, 0, 21))
+  let age = now.getFullYear() - birthDate.getFullYear()
+  const m = now.getMonth() - birthDate.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < birthDate.getDate())) age--
+  const bmr = (10 * weightKg) + (6.25 * TDEE_HEIGHT_CM) - (5 * age) + 5
+  return Math.round(bmr * 1.2)
+}
+
+function hrZoneLabel(hr: number): string {
+  if (hr < 100) return 'Easy'
+  if (hr < 120) return 'Moderate'
+  if (hr < 140) return 'Brisk'
+  if (hr < 160) return 'Vigorous'
+  return 'High intensity'
+}
+
 function fmtDate(d: Date | string) {
   const dt = typeof d === 'string' ? new Date(d + 'T00:00:00') : d
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -113,6 +134,49 @@ export async function buildDataSummary(): Promise<string> {
   }
   lines.push('')
 
+  // TDEE & Calorie Deficit
+  lines.push('### Calorie Deficit Analysis')
+  const latestWeightLog = logs.find(l => l.weight != null)
+  const tdeeBaseline = calcTdeeForSummary(latestWeightLog?.weight ?? null, now)
+  lines.push(`BMR baseline (sedentary): ~${tdeeBaseline} kcal/day`)
+  // Today's deficit
+  if (todayLog) {
+    const todayWeightKg = ((todayLog.weight as number | null) ?? latestWeightLog?.weight ?? null)
+    const todayBurn = (todayLog.walkMins != null && (todayLog.walkMins > 0 || (todayLog.walkSecs ?? 0) > 0) && todayWeightKg != null)
+      ? Math.round(3.8 * (todayWeightKg / 2.205) * (((todayLog.walkMins ?? 0) * 60 + (todayLog.walkSecs ?? 0)) / 3600))
+      : 0
+    const todayTdee = calcTdeeForSummary((todayLog.weight as number | null) ?? latestWeightLog?.weight ?? null, now)
+    const todayTotalBurn = todayTdee + todayBurn
+    lines.push(`Today's total burn estimate: ~${todayTotalBurn} kcal (baseline + walk)`)
+    const todayCalIn = todayFood.reduce((s, e) => s + e.calories, 0)
+    if (todayCalIn > 0) {
+      const todayDeficit = todayTotalBurn - todayCalIn
+      lines.push(`Today's estimated deficit: ~${todayDeficit} kcal`)
+    }
+  }
+  // 7-day avg deficit
+  const last7FoodByDate: Record<string, number> = {}
+  for (const fe of foodEntries.filter(f => f.date >= since7)) {
+    const dk = fe.date.toISOString().split('T')[0]
+    last7FoodByDate[dk] = (last7FoodByDate[dk] ?? 0) + fe.calories
+  }
+  const last7Logs = logs.filter(l => l.date >= since7 && last7FoodByDate[l.date.toISOString().split('T')[0]] != null)
+  if (last7Logs.length > 0) {
+    const avgDeficit7 = Math.round(
+      last7Logs.reduce((s, l) => {
+        const dk = l.date.toISOString().split('T')[0]
+        const calIn = last7FoodByDate[dk] ?? 0
+        const wBurn = l.walkMins != null && l.weight != null
+          ? Math.round(3.8 * (l.weight / 2.205) * (((l.walkMins ?? 0) * 60 + ((l as { walkSecs?: number | null }).walkSecs ?? 0)) / 3600))
+          : 0
+        const dayTdee = calcTdeeForSummary(l.weight, now)
+        return s + (dayTdee + wBurn - calIn)
+      }, 0) / last7Logs.length
+    )
+    lines.push(`Avg daily deficit last 7 days: ~${avgDeficit7} kcal`)
+  }
+  lines.push('')
+
   // Macro adherence
   lines.push('### Macro Adherence (last 14 days)')
   const foodByDate: Record<string, { protein: number, fat: number, netCarbs: number, calories: number }> = {}
@@ -166,6 +230,20 @@ export async function buildDataSummary(): Promise<string> {
     lines.push(`Total miles: ${totalMiles.toFixed(1)}`)
     lines.push(`Avg miles per walk: ${avgMiles.toFixed(1)}`)
     lines.push(`Days with no walk logged: ${noWalkDays}`)
+    const hrLogs = walkLogs.filter(l => (l as { walkAvgHR?: number | null }).walkAvgHR != null)
+    if (hrLogs.length > 0) {
+      const hrs = hrLogs.map(l => (l as { walkAvgHR?: number | null }).walkAvgHR as number)
+      const avgHR = Math.round(hrs.reduce((s,h) => s+h, 0) / hrs.length)
+      const minHR = Math.min(...hrs)
+      const maxHR = Math.max(...hrs)
+      lines.push(`Walk HR logged: ${hrLogs.length} entries — avg ${avgHR}bpm, range ${minHR}-${maxHR}bpm`)
+    }
+    const lastWalk = recentLogs.find(l => l.walkMiles != null || l.walkMins != null)
+    if (lastWalk) {
+      const lhr = (lastWalk as { walkAvgHR?: number | null }).walkAvgHR
+      const hrPart = lhr != null ? ` / ${lhr}bpm (${hrZoneLabel(lhr)})` : ''
+      lines.push(`Last walk: ${lastWalk.walkMiles ?? '—'} mi / ${lastWalk.walkMins ?? '—'} min${hrPart}`)
+    }
   }
   lines.push('')
 
@@ -255,7 +333,8 @@ Guidelines:
 - Never recommend anything that conflicts with his cardiac medications (lisinopril, atorvastatin, aspirin 81mg)
 - Always consider GI impact first when suggesting foods
 - Keep the mid-August physician follow-up (198.8 lb goal) in view
-- If diastolic was logged ≤65 recently, address it directly`
+- If diastolic was logged ≤65 recently, address it directly
+- Keith's BMR baseline (sedentary, BMR×1.2) is approximately 2,000-2,200 kcal depending on current weight. His protocol targets ~1,500-1,600 kcal intake, creating a ~600-700 kcal daily deficit before walk burn. Reference actual calculated values from the data summary when discussing his deficit.`
 
   const userMessage = `Based on my health data below, give me today's full coaching recommendation.
 
