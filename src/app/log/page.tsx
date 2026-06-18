@@ -631,7 +631,7 @@ export default function LogPage() {
         </div>
       </div>
 
-      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)' }} onClick={handleSave} disabled={saving}>
+      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)', marginBottom: 16 }} onClick={handleSave} disabled={saving}>
         {saving ? 'Saving…' : isToday ? 'Save Check-in' : `Update ${dateLabel}`}
       </button>
 
@@ -872,7 +872,7 @@ export default function LogPage() {
         })}
       </div>
 
-      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)' }} onClick={handleSave} disabled={saving}>
+      <button className="btn-primary" style={{ background: 'var(--green)', boxShadow: '0 4px 12px rgba(26,122,74,0.3)', marginBottom: 16 }} onClick={handleSave} disabled={saving}>
         {saving ? 'Saving…' : isToday ? 'Save Check-in' : `Update ${dateLabel}`}
       </button>
 
